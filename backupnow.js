@@ -1,8 +1,9 @@
 var util = require('util');
-var https=require('https');
+var https = require('https');
 var Client = require('node-rest-client').Client;
 var fs = require('fs');
 var accesstoken = fs.readFileSync("./accesstoken.txt");
+
 var baseURL = "https://api.compose.io";
 
 var headers = {
@@ -17,71 +18,27 @@ var httpArgs = {
 
 var client = new Client();
 
-if (process.argv.length != 3) {
-  console.log("Need a deployment name to backup");
-  process.exit(1);
-}
-
-var deployment = process.argv[2];
-var accountslug = "";
-var backupid = "";
-var timeoutTimer;
-// We will assume that the lead account is the one to use for backups
-
-client.get(util.format("%s/accounts", baseURL), httpArgs,
-  function(accounts, response) {
-    if (response.statusCode != 200) {
-      if (accounts.hasOwnProperty("error")) {
-        res.send(accounts.error);
-      } else {
-        res.send(response.headers.status);
-      }
-      return;
-    }
-
-    accountslug = accounts[0].slug;
-
-    client.post(util.format("%s/deployments/%s/%s/backups", baseURL,
-      accountslug, deployment), httpArgs, function(backup, response) {
-      if (response.statusCode != 201) {
+function getAccount(callback) {
+  client.get(util.format("%s/accounts", baseURL), httpArgs,
+    function(accounts, response) {
+      if (response.statusCode != 200) {
         if (accounts.hasOwnProperty("error")) {
-          console.log(accounts.error);
+          callback(accounts.error, null);
         } else {
-          console.log(response.headers.status);
-          console.log(backup.error);
+          callback(response.headers.status, null);
         }
         return;
       }
-      backupid = backup.id;
-      console.log("Backup started for "+backupid)
-      timerTimeout = setTimeout(backupReady, 15 * 1000);
-    });
-  });
+      callback(null, accounts[0].slug);
+    })
+}
 
-
-function backupReady() {
-  clearTimeout(timerTimeout);
-  client.get(util.format("%s/accounts/%s/backups/%s", baseURL,
-    accountslug, backupid), httpArgs, function(backup, response) {
-    if (backup.status === "complete") {
-      console.log("Backup completed");
-      console.log("Now to retrieve ");
-      for(var i=0; i<backup.links.length;i++) {
-        link=backup.links[i];
-        if(link.rel=="download") {
-          console.log("Will get link from "+link.href);
-          client.get(link.href,httpArgs, function(doc,response) {
-            download(response.headers.location, backup.filename, function() {
-              console.log("Download complete");
-            } );
-          });
-        }
-      }
-    } else {
-      timerTimeout = setTimeout(backupReady, 15 * 1000);
-    }
-  })
-};
+function exitIfErr(err, message) {
+  if (err != null) {
+    console.log(message + ": " + err);
+    process.exit(1);
+  }
+}
 
 var download = function(url, dest, cb) {
   var file = fs.createWriteStream(dest);
@@ -93,3 +50,75 @@ var download = function(url, dest, cb) {
     });
   });
 }
+
+if (process.argv.length == 2) {
+  getAccount(function(err, slug) {
+    exitIfErr(err, "Could not get account");
+    client.get(util.format("%s/accounts/%s/deployments", baseURL, slug),
+      httpArgs, function(deployments, response) {
+        exitIfErr(err, "Could not get deployments");
+        console.log(
+          "You need to give a deployment as a parameter to this command");
+        console.log("Available deployments are:");
+        for (var i = 0; i < deployments.length; i++) {
+          if (deployments[i].name == "") {
+            console.log(deployments[i].id);
+          } else {
+            console.log(deployments[i].name);
+          }
+        }
+        process.exit(0);
+      });
+  });
+} else {
+
+  if (process.argv.length != 3) {
+    console.log("Need a deployment name to backup");
+    process.exit(1);
+  }
+
+  var deployment = process.argv[2];
+  var accountslug = "";
+  var backupId = "";
+  var backupFilename = "";
+  var timeoutTimer;
+
+  getAccount(function(err, slug) {
+    exitIfErr(err, "Could not get account");
+    accountslug = slug;
+    client.post(util.format("%s/deployments/%s/%s/backups", baseURL,
+      accountslug, deployment), httpArgs, function(backup, response) {
+      if (response.statusCode != 201) {
+        console.log(backup.error+" (" + response.headers.status +")");
+        return;
+      }
+      backupId = backup.id;
+      backupFilename = backup.filename;
+      console.log("Backup started for with id=" + backupId)
+      timerTimeout = setTimeout(backupReady, 15 * 1000);
+    });
+  });
+}
+
+function backupReady() {
+  clearTimeout(timerTimeout);
+  client.get(util.format("%s/accounts/%s/backups/%s", baseURL,
+    accountslug, backupId), httpArgs, function(backup, response) {
+    if (backup.status === "complete") {
+      console.log("Backup completed - now retrieving: " + backupFilename);
+      for (var i = 0; i < backup.links.length; i++) {
+        link = backup.links[i];
+        if (link.rel == "download") {
+          console.log("Will get link from " + link.href);
+          client.get(link.href, httpArgs, function(doc, response) {
+            download(response.headers.location, backup.filename, function() {
+              console.log("Download complete");
+            });
+          });
+        }
+      }
+    } else {
+      timerTimeout = setTimeout(backupReady, 15 * 1000);
+    }
+  })
+};
