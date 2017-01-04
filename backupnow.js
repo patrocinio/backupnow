@@ -4,11 +4,13 @@ var Client = require('node-rest-client').Client;
 var fs = require('fs');
 var accesstoken = fs.readFileSync("./accesstoken.txt");
 
-var baseURL = "https://api.compose.io";
+var baseURL = "https://api.compose.io/2016-07/";
+
+console.log ("access token:" + accesstoken);
 
 var headers = {
   "Content-Type": "application-json",
-  "Accept-Version": "2014-06",
+  "Accept-Version": "2016-07",
   "Authorization": "Bearer " + accesstoken
 }
 
@@ -48,12 +50,13 @@ if (process.argv.length == 3) {
 
   getAccount(function(err, slug) {
     exitIfErr(err, "Could not get account");
-    client.get(util.format("%s/accounts/%s/deployments", baseURL, slug),
+    client.get(util.format("%s/deployments", baseURL, slug),
       httpArgs, function(deployments, response) {
         exitIfErr(err, "Could not get deployments");
         console.log(
           "You need to give a deployment as a parameter to this command");
         console.log("Available deployments are:");
+        console.log ("deployments: " + JSON.stringify(deployments));
         for (var i = 0; i < deployments.length; i++) {
           if (deployments[i].name == "") {
             console.log(deployments[i].id);
@@ -99,7 +102,8 @@ function getAccount(callback) {
         }
         return;
       }
-      callback(null, accounts[0].slug);
+      console.log ("accounts: " + JSON.stringify(accounts));
+      callback(null, accounts["_embedded"]["accounts"][0].slug);
     })
 }
 
